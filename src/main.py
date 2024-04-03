@@ -9,7 +9,8 @@ from key_generator.key_generator import generate as key_generator
 
 app = Flask(__name__)
 
-app.config['UPLOAD_FOLDER'] = Path('./uploads')
+app.config['DATA_FOLDER'] = Path('./data')
+app.config['UPLOAD_FOLDER'] = app.config['DATA_FOLDER'] / 'modpacks'
 
 
 def format_bytes(size):
@@ -30,20 +31,65 @@ def download_file():
     return jsonify({"message": "Method is not ready!"}), 400
 
 
+@app.route('/user', methods=['GET'])
+def def_users():
+    act = request.args.get("act")
+    if act not in ['new', 'check']:
+        return jsonify({"error": "Unknown act"}), 400
+    nick = request.args.get("nick")
+    pswd = request.args.get("pswd")
+    if not nick or not pswd:
+        return jsonify({"error": "No nick or pswd provided."}), 400
+    with open(app.config['DATA_FOLDER'] / "users.json", "r") as f:
+        users = json.load(f)
+    user = None
+    if users['users'].get(nick):
+        user = users['users'][nick]
+    if act == "new":
+        if user:
+            return jsonify({"error": "User already created."})
+        token = key_generator(5, ['-', '{', ')', '@', '=', '<>'], 3, 4).get_key()
+        while True:
+            if not users['link'].get(token):
+                break
+            token = key_generator(5, [':'], 3, 4).get_key()
+        user_info = {nick: {"pswd": hashlib.sha256(pswd.encode()).hexdigest(), "token": token, "modpacks": []}}
+        users['users'].update(user_info)
+        users['link'][token] = nick
+        with open(app.config['DATA_FOLDER'] / "users.json", "w") as f:
+            json.dump(users, f, indent=2)
+        return jsonify({"token": token})
+    if act == "check":
+        if user and hashlib.sha256(pswd.encode()).hexdigest() == user['pswd']:
+            return jsonify({"token": user['token']})
+        return jsonify({"error": "Bad password or user not found."})
+
+
 @app.route('/upload/<path:code>', methods=['POST', 'GET'])
 def upload_file(code):
-    info = {"code": code, "size": 0, "files_count": 0, "files": {}}
+    info = {"code": code, "owner": None, "size": 0, "files_count": 0, "mods": {}, "config": {}}
 
     if request.method == 'GET':
         if code == "get_code":
+
+            token = request.args.get("token")
+            with open(app.config['DATA_FOLDER'] / "users.json", "r") as f:
+                users = json.load(f)
+            nick = users['link'].get(token)
+            if not nick:
+                return jsonify({"error": "Invalid token"}), 400
+
             code = key_generator(2, ['-', ], 4, 5, capital='mix').get_key()
             modpack = app.config['UPLOAD_FOLDER'] / code
             while True:
                 if not os.path.exists(modpack):
                     break
+                code = key_generator(2, ['-', ], 4, 5, capital='mix').get_key()
+                modpack = app.config['UPLOAD_FOLDER'] / code
             os.makedirs(modpack)
             os.makedirs(modpack / "mods")
             os.makedirs(modpack / "config")
+            info['owner'] = nick
             info['code'] = code
             with open(modpack / "info.json", "w") as f:
                 json.dump(info, f)
@@ -66,16 +112,17 @@ def upload_file(code):
     for file in files:
         file = files.get(file)
         flm = file.filename
-        file_path = None
+        file_path = ftype = None
 
         mx = flm.find("mods/")
         mx = mx if mx != -1 else flm.find("mods\\")
         if mx != -1:
+            ftype = "mods"
             file_path = modpack / flm[mx:]
-
         cx = flm.find("config/")
         cx = cx if cx != -1 else flm.find("config\\")
         if cx != -1:
+            ftype = "config"
             file_path = modpack / flm[cx:]
 
         if file_path:
@@ -86,20 +133,21 @@ def upload_file(code):
             hash = sha256_hash.hexdigest()
             file.seek(0)
             sname = str(file_path.name)
-            if info['files'].get(sname):
+            if info[ftype].get(sname):
                 if info['files'][sname]['sha256'] == hash:
                     continue
             file.save(file_path)
             size = os.path.getsize(file_path)
             info['size'] += size
-            info['files'].update({sname: {"path": str(file_path), "size": size, "sha256": hash}})
+            info[ftype].update({sname: {"path": str(file_path), "size": size, "sha256": hash}})
             info['files_count'] += 1
             uploaded_count += 1
             uploaded_size += size
 
     with open(modpack / "info.json", "w") as f:
         json.dump(info, f, indent=2)
-    return jsonify({"message": f"{uploaded_count} files with size {format_bytes(uploaded_size)} uploaded for code {code}."})
+    return jsonify(
+        {"message": f"{uploaded_count} files with size {format_bytes(uploaded_size)} uploaded for code {code}."})
 
 
 @app.route('/info/<path:code>', methods=['GET'])
@@ -113,17 +161,25 @@ def info_by_code(code):
     <center><h1>\"{code}\"</h1></center>
     <p style="font-size: 1.5em;">Информация о сборке \"{code}\"</p>
     <p style="font-size: 1.17em;">
-    Создатель: NONE <br>
+    Создатель: {info['owner']} <br>
     Всего файлов: {info['files_count']}<br>
     Размер: {format_bytes(info['size'])}
     </p>
-    <p style="font-size: 1.5em;">Список файлов</p>
+    <p style="font-size: 1.5em;">Список файлов:</p>
+    <p style="font-size: 1.4em;">Моды:</p>
     <p style="font-size: 1.17em;">
-    {"<br>".join(info['files'].keys())}
+    {"<br>".join([f"{i}. {v}" for i, v in enumerate(info['mods'].keys())])}
+    </p>
+    <p style="font-size: 1.4em;">Остальное:</p>
+    <p style="font-size: 1.17em;">
+    {"<br>".join([i['path'] for i in info['config'].values()])}
     </p>
     """)
 
 
 if __name__ == '__main__':
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+    if not os.path.exists(app.config['DATA_FOLDER'] / "users.json"):
+        with open(app.config['DATA_FOLDER'] / "users.json", "w") as _f:
+            json.dump({"users": {}, "link": {}}, _f)
     app.run(debug=True)
