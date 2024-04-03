@@ -184,4 +184,4 @@ if not os.path.exists(app.config['DATA_FOLDER'] / "users.json"):
         json.dump({"users": {}, "link": {}}, _f)
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(port=8000, debug=True)
