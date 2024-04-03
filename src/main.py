@@ -2,6 +2,8 @@ import hashlib
 import json
 import os
 import textwrap
+import zipfile
+from datetime import datetime
 from pathlib import Path
 
 from flask import Flask, request, jsonify
@@ -85,7 +87,7 @@ def upload_file(code, token):
             os.makedirs(modpack)
             os.makedirs(modpack / "mods")
             os.makedirs(modpack / "config")
-            info = {"code": code, "owner": nick, "size": 0, "files_count": 0, "mods": {}, "config": {}}
+            info = {"name": request.args.get("name"), "code": code, "owner": nick, "size": 0, "files_count": 0, "mods": {}, "config": {}}
             with open(modpack / "info.json", "w") as f:
                 json.dump(info, f)
             users['users'][nick]['modpacks'].append(code)
@@ -112,16 +114,14 @@ def upload_file(code, token):
     uploaded_size = 0
     for file in files:
         file = files.get(file)
-        flm = file.filename
+        flm = file.filename.replace('\\', '/')
         file_path = ftype = None
 
         mx = flm.find("mods/")
-        mx = mx if mx != -1 else flm.find("mods\\")
         if mx != -1:
             ftype = "mods"
             file_path = modpack / flm[mx:]
         cx = flm.find("config/")
-        cx = cx if cx != -1 else flm.find("config\\")
         if cx != -1:
             ftype = "config"
             file_path = modpack / flm[cx:]
@@ -145,8 +145,16 @@ def upload_file(code, token):
             uploaded_count += 1
             uploaded_size += size
 
-    with open(modpack / "info.json", "w") as f:
-        json.dump(info, f, indent=2)
+    if uploaded_count > 0:
+        with open(modpack / "info.json", "w") as f:
+            json.dump(info, f, indent=2)
+        with zipfile.ZipFile(app.config['UPLOAD_FOLDER'] / f"{code}.zip", 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for root, _, files in os.walk(modpack):
+                for file in files:
+                    fp = os.path.join(root, file)
+                    # noinspection PyTypeChecker
+                    zipf.write(fp, os.path.relpath(fp, modpack))
+
     return jsonify(
         {"message": f"{uploaded_count} files with size {format_bytes(uploaded_size)} uploaded for code {code}."})
 
@@ -159,12 +167,15 @@ def info_by_code(code):
     with open(modpack / "info.json", "r") as f:
         info = json.load(f)
     return textwrap.dedent(f"""
-    <center><h1>\"{code}\"</h1></center>
-    <p style="font-size: 1.5em;">Информация о сборке \"{code}\"</p>
+    <center><h1>Modpack code: {code}</h1></center>
+    <p style="font-size: 1.5em;">Общая информация информация о сборке</p>
     <p style="font-size: 1.17em;">
-    Создатель: {info['owner']} <br>
+    Название: \"<a style="font-weight: bold;">{info['name']}</a>\"<br>
+    Создатель: {info['owner']}<br>
     Всего файлов: {info['files_count']}<br>
-    Размер: {format_bytes(info['size'])}
+    Размер: {format_bytes(info['size'])}<br>
+    Последние обновление: {datetime.fromtimestamp(os.path.getmtime(app.config['UPLOAD_FOLDER'] / f"{code}.zip"))}<br>
+    Путь до архива: {app.config['UPLOAD_FOLDER'] / f"{code}.zip"}
     </p>
     <p style="font-size: 1.5em;">Список файлов:</p>
     <p style="font-size: 1.4em;">Моды:</p>
