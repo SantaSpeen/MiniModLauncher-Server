@@ -160,4 +160,4 @@ cython_debug/
 #.idea/
 
 _test/
-uploads/
+data/
