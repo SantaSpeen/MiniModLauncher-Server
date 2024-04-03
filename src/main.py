@@ -67,7 +67,6 @@ def def_users():
 
 @app.route('/upload/<code>/<token>', methods=['POST', 'GET'])
 def upload_file(code, token):
-
     with open(app.config['DATA_FOLDER'] / "users.json", "r") as f:
         users = json.load(f)
     nick = users['link'].get(token)
@@ -179,9 +178,10 @@ def info_by_code(code):
     """)
 
 
+os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+if not os.path.exists(app.config['DATA_FOLDER'] / "users.json"):
+    with open(app.config['DATA_FOLDER'] / "users.json", "w") as _f:
+        json.dump({"users": {}, "link": {}}, _f)
+
 if __name__ == '__main__':
-    os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
-    if not os.path.exists(app.config['DATA_FOLDER'] / "users.json"):
-        with open(app.config['DATA_FOLDER'] / "users.json", "w") as _f:
-            json.dump({"users": {}, "link": {}}, _f)
     app.run(debug=True)
