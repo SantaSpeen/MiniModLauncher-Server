@@ -67,11 +67,8 @@ def def_users():
 
 @app.route('/upload/<path:code>', methods=['POST', 'GET'])
 def upload_file(code):
-    info = {"code": code, "owner": None, "size": 0, "files_count": 0, "mods": {}, "config": {}}
-
     if request.method == 'GET':
         if code == "get_code":
-
             token = request.args.get("token")
             with open(app.config['DATA_FOLDER'] / "users.json", "r") as f:
                 users = json.load(f)
@@ -89,8 +86,7 @@ def upload_file(code):
             os.makedirs(modpack)
             os.makedirs(modpack / "mods")
             os.makedirs(modpack / "config")
-            info['owner'] = nick
-            info['code'] = code
+            info = {"code": code, "owner": nick, "size": 0, "files_count": 0, "mods": {}, "config": {}}
             with open(modpack / "info.json", "w") as f:
                 json.dump(info, f)
             return jsonify({"code": code})
