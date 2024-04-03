@@ -65,17 +65,17 @@ def def_users():
         return jsonify({"error": "Bad password or user not found."})
 
 
-@app.route('/upload/<path:code>', methods=['POST', 'GET'])
-def upload_file(code):
+@app.route('/upload/<code>/<token>', methods=['POST', 'GET'])
+def upload_file(code, token):
+
+    with open(app.config['DATA_FOLDER'] / "users.json", "r") as f:
+        users = json.load(f)
+    nick = users['link'].get(token)
+    if not nick:
+        return jsonify({"error": "Invalid token"}), 400
+
     if request.method == 'GET':
         if code == "get_code":
-            token = request.args.get("token")
-            with open(app.config['DATA_FOLDER'] / "users.json", "r") as f:
-                users = json.load(f)
-            nick = users['link'].get(token)
-            if not nick:
-                return jsonify({"error": "Invalid token"}), 400
-
             code = key_generator(2, ['-', ], 4, 5, capital='mix').get_key()
             modpack = app.config['UPLOAD_FOLDER'] / code
             while True:
@@ -89,19 +89,25 @@ def upload_file(code):
             info = {"code": code, "owner": nick, "size": 0, "files_count": 0, "mods": {}, "config": {}}
             with open(modpack / "info.json", "w") as f:
                 json.dump(info, f)
-            return jsonify({"code": code})
-        return jsonify({"error": "Invalid code"}), 405
-
-    modpack = app.config['UPLOAD_FOLDER'] / code
-    if not code or not os.path.exists(modpack):
-        return jsonify({"error": "Invalid code"}), 400
+            users['users'][nick]['modpacks'].append(code)
+            with open(app.config['DATA_FOLDER'] / "users.json", "w") as f:
+                json.dump(users, f, indent=2)
+            return {"code": code}
+        return {"error": "Invalid request"}, 400
 
     files = request.files
     if not files:
         return jsonify({"error": "No files provided."}), 400
 
+    modpack = app.config['UPLOAD_FOLDER'] / code
+    if not code or not os.path.exists(modpack):
+        return {"error": "Invalid code"}, 400
+
     with open(modpack / "info.json", "r") as f:
         info = json.load(f)
+
+    if info['owner'] != nick:
+        return {"error": "You not owner of that modpack."}, 403
 
     uploaded_count = 0
     uploaded_size = 0
@@ -130,7 +136,7 @@ def upload_file(code):
             file.seek(0)
             sname = str(file_path.name)
             if info[ftype].get(sname):
-                if info['files'][sname]['sha256'] == hash:
+                if info[ftype][sname]['sha256'] == hash:
                     continue
             file.save(file_path)
             size = os.path.getsize(file_path)
