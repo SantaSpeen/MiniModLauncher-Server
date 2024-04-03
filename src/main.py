@@ -9,7 +9,7 @@ from key_generator.key_generator import generate as key_generator
 
 app = Flask(__name__)
 
-app.config['DATA_FOLDER'] = Path('./data')
+app.config['DATA_FOLDER'] = Path('./data') if not os.getenv("IN_DOCKER") else Path('/app/data/')
 app.config['UPLOAD_FOLDER'] = app.config['DATA_FOLDER'] / 'modpacks'
 
 
