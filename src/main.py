@@ -93,6 +93,8 @@ def upload_file(code, token):
             users['users'][nick]['modpacks'].append(code)
             with open(app.config['DATA_FOLDER'] / "users.json", "w") as f:
                 json.dump(users, f, indent=2)
+            with open(app.config['UPLOAD_FOLDER'] / f"{code}.zip", "w"):
+                pass
             return {"code": code}
         return {"error": "Invalid request"}, 400
 
