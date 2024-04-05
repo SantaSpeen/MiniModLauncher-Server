@@ -1,12 +1,13 @@
 import hashlib
 import json
 import os
+import shutil
 import textwrap
 import zipfile
 from datetime import datetime
 from pathlib import Path
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 from key_generator.key_generator import generate as key_generator
 
 app = Flask(__name__)
@@ -25,12 +26,12 @@ def format_bytes(size):
     return f"{size:.2f}{units[n]}"
 
 
-@app.route('/download', methods=['GET'])
-def download_file():
-    code = request.args.get('code')
-    if not code:
-        return jsonify({"error": "File not found."}), 404
-    return jsonify({"message": "Method is not ready!"}), 400
+@app.route('/download/<code>', methods=['GET'])
+def download_file(code):
+    modpack = app.config['UPLOAD_FOLDER'] / f"{code}.zip"
+    if not code or not os.path.exists(modpack):
+        return {"error": "Invalid code"}, 400
+    return send_file(modpack, as_attachment=True)
 
 
 @app.route('/user', methods=['GET'])
@@ -67,6 +68,22 @@ def def_users():
         return jsonify({"error": "Bad password or user not found."})
 
 
+def _create_empty_modpack(code, nick, users=None):
+    modpack = app.config['UPLOAD_FOLDER'] / code
+    os.makedirs(modpack)
+    os.makedirs(modpack / "mods")
+    os.makedirs(modpack / "config")
+    info = {"name": request.args.get("name"), "code": code, "owner": nick, "size": 0, "files_count": 0,
+            "mods": {}, "config": {}}
+    with open(modpack / "info.json", "w") as f:
+        json.dump(info, f)
+    open(app.config['UPLOAD_FOLDER'] / f"{code}.zip", "w").close()
+    if users:
+        users['users'][nick]['modpacks'].append(code)
+        with open(app.config['DATA_FOLDER'] / "users.json", "w") as f:
+            json.dump(users, f, indent=2)
+
+
 @app.route('/upload/<code>/<token>', methods=['POST', 'GET'])
 def upload_file(code, token):
     with open(app.config['DATA_FOLDER'] / "users.json", "r") as f:
@@ -84,18 +101,30 @@ def upload_file(code, token):
                     break
                 code = key_generator(2, ['-', ], 4, 5, capital='mix').get_key()
                 modpack = app.config['UPLOAD_FOLDER'] / code
-            os.makedirs(modpack)
-            os.makedirs(modpack / "mods")
-            os.makedirs(modpack / "config")
-            info = {"name": request.args.get("name"), "code": code, "owner": nick, "size": 0, "files_count": 0, "mods": {}, "config": {}}
-            with open(modpack / "info.json", "w") as f:
-                json.dump(info, f)
-            users['users'][nick]['modpacks'].append(code)
-            with open(app.config['DATA_FOLDER'] / "users.json", "w") as f:
-                json.dump(users, f, indent=2)
-            with open(app.config['UPLOAD_FOLDER'] / f"{code}.zip", "w"):
-                pass
+            _create_empty_modpack(code, nick, users)
             return {"code": code}
+        else:
+            modpack = app.config['UPLOAD_FOLDER'] / code
+            if not code or not os.path.exists(modpack):
+                return {"error": "Invalid code"}, 400
+            act = request.args.get("act")
+            if act not in ['reset', 'lock', 'unlock']:
+                return jsonify({"error": "Unknown act"}), 400
+            lockfile = modpack / "lock"
+            if act == "unlock":
+                os.remove(lockfile)
+                return {"message": f"modpack unlocked"}
+            else:
+                if os.path.isfile(modpack / "lock"):
+                    return {"message": f"modpack locked"}
+            if act == "lock":
+                open(lockfile, "w").close()
+                return {"message": f"modpack locked"}
+            if act == "reset":
+                shutil.rmtree(modpack)
+                os.remove(app.config['UPLOAD_FOLDER'] / f"{code}.zip")
+                _create_empty_modpack(code, nick)
+                return {"message": "modpack emtpy"}
         return {"error": "Invalid request"}, 400
 
     files = request.files
@@ -164,31 +193,36 @@ def upload_file(code, token):
 @app.route('/info/<path:code>', methods=['GET'])
 def info_by_code(code):
     modpack = app.config['UPLOAD_FOLDER'] / code
+    oformat = request.args.get("format") or "html"
     if not code or not os.path.exists(modpack):
+        if oformat == "json":
+            return {"error": "Invalid code"}, 400
         return f"<center><h1>Сборка \"{code}\" не найдена</h1></center>", 400
     with open(modpack / "info.json", "r") as f:
         info = json.load(f)
+    if oformat == "json":
+        return jsonify(info)
     return textwrap.dedent(f"""
-    <center><h1>Modpack code: {code}</h1></center>
-    <p style="font-size: 1.5em;">Общая информация информация о сборке</p>
-    <p style="font-size: 1.17em;">
-    Название: \"<a style="font-weight: bold;">{info['name']}</a>\"<br>
-    Создатель: {info['owner']}<br>
-    Всего файлов: {info['files_count']}<br>
-    Размер: {format_bytes(info['size'])}<br>
-    Последние обновление: {datetime.fromtimestamp(os.path.getmtime(app.config['UPLOAD_FOLDER'] / f"{code}.zip"))}<br>
-    Путь до архива: {app.config['UPLOAD_FOLDER'] / f"{code}.zip"}
-    </p>
-    <p style="font-size: 1.5em;">Список файлов:</p>
-    <p style="font-size: 1.4em;">Моды:</p>
-    <p style="font-size: 1.17em;">
-    {"<br>".join([f"{i}. {v}" for i, v in enumerate(info['mods'].keys())])}
-    </p>
-    <p style="font-size: 1.4em;">Остальное:</p>
-    <p style="font-size: 1.17em;">
-    {"<br>".join([i['path'] for i in info['config'].values()])}
-    </p>
-    """)
+        <center><h1>Modpack code: {code}</h1></center>
+        <p style="font-size: 1.5em;">Общая информация информация о сборке</p>
+        <p style="font-size: 1.17em;">
+        Название: \"<a style="font-weight: bold;">{info['name']}</a>\"<br>
+        Создатель: {info['owner']}<br>
+        Всего файлов: {info['files_count']}<br>
+        Размер: {format_bytes(info['size'])}<br>
+        Последние обновление: {datetime.fromtimestamp(os.path.getmtime(app.config['UPLOAD_FOLDER'] / f"{code}.zip"))}<br>
+        Путь до архива: {app.config['UPLOAD_FOLDER'] / f"{code}.zip"}
+        </p>
+        <p style="font-size: 1.5em;">Список файлов:</p>
+        <p style="font-size: 1.4em;">Моды:</p>
+        <p style="font-size: 1.17em;">
+        {"<br>".join([f"{i}. {v}" for i, v in enumerate(info['mods'].keys(), 1)])}
+        </p>
+        <p style="font-size: 1.4em;">Остальное:</p>
+        <p style="font-size: 1.17em;">
+        {"<br>".join([i['path'] for i in info['config'].values()])}
+        </p>
+        """)
 
 
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
